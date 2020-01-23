@@ -1,6 +1,8 @@
 Numbers, UnOps, Vars
 ====================
 
+`Slides <https://ucsc-cse-110a.github.io/winter20/slides/adder.key.pdf>`_
+
 Let's write:
     - a compiler that translates a string into assembly
     - a runtime to execute it
@@ -309,7 +311,91 @@ We get a bunch of 4-byte slots on the stack at offsets from the stack pointer:
 
 ``EBP - 4 * 1, EBP - 4 * 2``, etc
 
-The ``i`` th stack variable lives at ``EBP - 4 * i``.
+The ``i`` th stack variable lives at ``EBP - 4 * i``, the previous stack frame lives at ``EBP``, and the return address lives at ``EBP + 4``.
+
+``EBP`` points to the bottom of the stack frame, ``ESP`` points to the top of the stack
 
 So we need a mapping from source variables to stack positions.
 
+So we maintain an ``Env`` that maps ``Id |-> StackPosition``, so
+
+``let x = e1 in e2`` adds ``x |-> i`` to ``Env`` where ``i`` is the current stack height.
+
+**Quiz**: http://tiny.cc/cse110a-stackvar-ind -> B
+
+**Example**:
+
+.. code-block:: haskell
+
+    let a = 1,               -- []
+        c =                  -- [a |-> 1]
+            let b = add1(a)
+            in add1(b)       -- [b |-> 2, a |-> 1]
+    in                       -- b is popped from stack and c assigned
+        add1(c)              -- [c |-> 2, a |-> 1]
+
+Strategy
+^^^^^^^^
+**Variable Use**
+
+To compile ``x`` given ``env``, move ``[ebp - 4 * i]`` into ``eax``
+
+**Variable Defn**
+
+To compile ``let x = e1 in e2``,
+    - compile ``e1`` using ``env`` (the result is stored in ``eax``)
+    - move ``eax`` into ``[ebp - 4 * i]``
+    - push ``x`` into ``env`` at position ``i``
+    - compile ``e2`` using ``env'``
+
+**Example**
+
+.. code-block:: haskell
+
+    let x = 10
+    in add1(x)
+
+    -- ==
+
+    mov eax, 10
+    mov [ebp-4*1], eax
+    mov eax, [ebp-4*1]
+    add eax, 1
+
+**Quiz**: http://tiny.cc/cse110a-let-ind
+
+Types
+^^^^^
+Let's extend the types!
+
+.. code-block:: haskell
+
+    type Id = Text
+
+    data Expr =
+        -- ...
+        | Let Id Expr Expr
+        | Var Id
+
+    data Arg =
+        -- ...
+        | RegOffset Int Reg  -- [ebp - 4 * i] == RegOffset i (Reg EBP)
+
+Environments
+^^^^^^^^^^^^
+
+.. code-block:: haskell
+
+    data Env = [(Id, Int)]
+
+    lookupEnv :: Env -> Id -> Maybe Int
+    lookupEnv [] x = Nothing
+    lookupEnv ((y, n):rest) x = if x == y
+                                    then Just n
+                                    else lookupEnv rest x
+
+    pushEnv :: Env -> Id -> (Int, Env)
+    pushEnv env x = (xn, env')
+        where
+            env' = (x, xn):env
+            xn   = 1 + length env
