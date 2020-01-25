@@ -7,6 +7,7 @@ Welcome to cse110a-notes's documentation!
 
     intro
     numunopvars
+    branchesbinops
 
 
 
