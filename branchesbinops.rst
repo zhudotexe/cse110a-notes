@@ -309,6 +309,9 @@ Now, we define an **ANF expression** any ``Expr`` s.t. ``isAnf expr -> True``.
 
 Compiling
 ^^^^^^^^^
+ANF -> ASM
+""""""""""
+
 Going from ``AnfTagE`` to ``Asm`` is easy, since both operands for every binop will be an immediate.
 
 .. code-block:: haskell
@@ -331,3 +334,122 @@ Going from ``AnfTagE`` to ``Asm`` is easy, since both operands for every binop w
             err = error "unbound variable"
 
 **Quiz**: https://tiny.cc/cse110a-anf2-ind -> E
+
+Bare -> ANF
+"""""""""""
+AKA **A-Normalization**
+
+The base cases are easy:
+
+.. code-block:: haskell
+
+    anf (Number n) = Number n
+    anf (Var x)    = Var x
+
+But...
+
+.. note::
+
+    **Example 1**: ``1 + 2 + 3`` needs to become:
+
+    .. code-block:: haskell
+
+        let t1 = 1 + 2
+        in
+            t1 + 3
+
+    **Example 2**: ``((1 + 2) + 3) + 4`` becomes
+
+    .. code-block:: haskell
+
+        let t1 = 1 + 2,
+            t2 = t1 + 3
+        in
+            t2 + 4
+
+    **Example 3**: ``((1 + 2) + 3) + ((4 + 5) + 6)`` becomes
+
+    .. code-block:: haskell
+
+        let t1 = 1 + 2,
+            t2 = t1 + 3,
+            t3 = 4 + 5,
+            t4 = t3 + 6
+        in
+            t2 + t4
+
+So, let's write a helper function ``imm :: BareE -> ([(Id, AnfE)], ImmE)``, which returns:
+    - a pair containing:
+        - a list of pairs of ``ti, ai`` containing new temp vars bound to ANF exprs
+        - an immediate value ``v``
+    - such that:
+
+.. code-block:: haskell
+
+    let t1 = a1,
+        ...
+    in
+        v
+
+Then, we can:
+    1. invoke ``imm`` on both the operands
+    2. concat the let bindings
+    3. apply the binop to the immediates
+
+
+.. code-block:: haskell
+
+    anf (Prim2 o e1 e2) = lets (b1s ++ b2s) (Prim2 o (Var v1) (Var v2))
+        where
+            (b1s, v1) = imm e1
+            (b2s, v2) = imm e2
+
+    lets :: [(Id, AnfE)] -> AnfE -> AnfE
+    lets [] e          = e
+    lets ((x,e):bs) e' = Let x e (lets bs e')
+
+    -- and lets and ifs are just recursive
+    anf (Let x e1 e2) = Let x e1' e2'
+        where
+            e1' = anf e1
+            e2' = anf e2
+
+    anf (If e1 e2 e3) = If e1' e2' e3'
+        where
+            e1' = anf e1
+            e2' = anf e2
+            e3' = anf e3
+
+    -- imm
+    imm :: BareE -> ([(Id, AnfE)], ImmE)
+    imm (Number n l)    = ( [], Number n l )
+    imm (Id x l)        = ( [], Id x l )
+    imm (Prim2 o e1 e2) = ( b1s ++ b2s ++ [(t, Prim2 o v1 v2)]
+        , Id t )
+        where
+            t = makeFreshVar ()
+            (b1s, v1) = imm e1
+            (b2s, v2) = imm e2
+    imm e@(If _ _ _)    = immExp e
+    imm e@(Let _ _ _)   = immExp e
+
+    immExp :: AnfE -> ([(Id, AnfE)], ImmE)
+    immExp e = ([(t, e')], t)
+        where
+            e' = anf e
+            t  = makeFreshVar ()
+
+So what's up about ``makeFreshVar``?
+
+Well... we're going to have to pass around a counter.
+
+.. code-block:: haskell
+
+    anf :: Int -> BareE -> (Int, AnfE)
+    imm :: Int -> AnfE -> (Int, [(Id, AnfE)], ImmE)
+    -- code not included. Check out the slides, page 20.
+
+    fresh :: Int -> (Id, Int)
+    fresh n = (n+1, "t" ++ show n)
+
+
