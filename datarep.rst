@@ -246,3 +246,152 @@ We need to manage the C call stack (C calling convention).
     push arg_1
     call target     ; make the call, putting return addr on stack
     add esp, 4*N    ; clear args by adding 4*N
+
+.. note::
+    when compiling on macOS, must respect 16 byte stack alignment invariant - esp must be 16-byte aligned
+
+So now...
+
+.. code-block:: asm
+
+    section .text
+    extern error
+    extern print
+    global our_code_starts_here
+    our_code_starts_here:
+        ; == prelude ==
+        push ebp
+        mov ebp, esp
+        sub esp, 0          ; 0 local variables here
+        ; == logic ==
+        mov eax, 1          ; not a valid number
+        mov ebx, eax        ; copy into ebx register
+        and ebx, 0x00000001 ; extract lsb
+        cmp ebx, 0          ; check if lsb equals 0
+        jne error_non_number
+        ; == postlude ==
+        mov esp, ebp
+        pop ebp
+        ret
+    error_non_number:
+        push eax
+        push 0
+        call error
+
+But now our compiler has to keep track of how many local variables are needed!
+
+Types
+^^^^^
+
+.. code-block:: haskell
+
+    data Ty = TNumber | TBoolean  -- data type for the runtime types
+
+    data Label =
+        ...
+        | TypeError Ty  -- type error label
+        | Builtin Text  -- functions implemented in C
+
+Transforms
+^^^^^^^^^^
+
+Now, the compiler has to:
+    - dynamically typecheck
+    - exit by calling error if an error occurs
+    - manage the calling convention
+
+Type Assertions
+"""""""""""""""
+
+.. code-block:: haskell
+
+    -- asserts that v is of type ty by checking the LSB
+    assertType :: Env -> IExp -> Ty -> [Instruction]
+    assertType env v ty
+        = [ IMov (Reg EAX) (immArg env v)
+          , IMov (Reg EBX) (Reg EAX)
+          , IAnd (Reg EBX) (HexConst 0x00000001)
+          , ICmp (Reg EBX) (typeTag ty)
+          , IJne (TypeError ty)
+          ]
+
+    -- where typeTag is:
+    typeTag :: Ty -> Arg
+    typeTag TNumber  = HexConst 0x00000000
+    typeTag TBoolean = HexConst 0x00000001
+
+    -- and add the type assertions:
+    compilePrim2 :: Env -> Prim2 -> ImmE -> ImmE -> [Instruction]
+    compilePrim2 env Plus v1 v2 = assertType env v1 TNumber
+                               ++ assertType env v2 TNumber
+                               ++ [ IMov (Reg EAX) (immArg env v1)
+                                  , IAdd (Reg EAX) (immArg env v2)
+                                  ]
+
+Errors
+""""""
+We also need to write the actual error handlers, which just call the C function ``error``:
+
+.. code-block:: haskell
+
+    errorHandler :: Ty -> Asm
+    errorHandler t =
+        -- the expected-number error
+        [ ILabel (TypeError t)
+        -- push the second "value" param first,
+        , IPush (Reg EAX)
+        -- then the first "code" param,
+        , IPush (ecode t)
+        -- call the run-time's "error" function.
+        , ICall (Builtin "error")
+        ]
+
+    ecode :: Ty -> Arg
+    ecode TNumber = Const 0
+    ecode TBoolean = Const 1
+
+Stack Management
+""""""""""""""""
+First, local variables live at an offset from ebp now instead of esp.
+
+.. code-block:: haskell
+
+    immArg :: Env -> ImmTag -> Arg
+    immArg _ (Number n _) = Const n
+    immArg env (Var x _) = RegOffset EBP i
+        where
+            i = fromMaybe err (lookup x env)
+            err = error (printf "Error: Variable '%s' is unbound" x)
+
+Next, we need to make sure our code respects the calling convention - which we can do by just wrapping the
+calling convention code around our generated body
+
+.. code-block:: haskell
+
+    compileBody :: AnfTagE -> Asm
+    compileBody e = entryCode e
+                 ++ compileEnv emptyEnv e
+                 ++ exitCode e
+
+    entryCode :: AnfTagE -> Asm
+    entryCode e = [ IPush (Reg EBP)
+                  , IMov (Reg EBP) (Reg ESP)
+                  , ISub (Reg ESP) (Const 4 * n)
+                  ]
+        where
+            n = countVars e  -- what's this?
+
+    exitCode :: AnfTagE -> Asm
+    exitCode = [ IMove (Reg ESP) (Reg EBP)
+               , IPop (Reg EBP)
+               , IRet
+               ]
+
+    -- just hack countvars for now
+    countVars _ = 100
+
+CountVars
+"""""""""
+So, as it turns out, getting an exact number is impossible.
+
+But getting a heuristic is easy enough.
