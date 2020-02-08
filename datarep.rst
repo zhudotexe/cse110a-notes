@@ -395,3 +395,33 @@ CountVars
 So, as it turns out, getting an exact number is impossible.
 
 But getting a heuristic is easy enough.
+
+**Quiz**: tiny.cc/cse110a-count-ind -> 0, 4, 4, 1
+
+Let's let ``countVars`` be the maximum number of let-binds in scope at any point inside ``e``, i.e. the max env size.
+
+- Immediate vars make no binds
+- binops take immediate vars (by this point), and so make no binds
+- branches can go either way, so they make as many binds as the larger of the branches
+- let binds require:
+    - evaluating ``e1``
+    - pushing that onto the stack and evaluating ``e2``
+    - so it's the larger of ``countVars e1`` and ``countVars e2 + 1``
+
+.. code-block:: haskell
+
+    countVars :: AnfTagE -> Int
+    countVars (If v e1 e2)  = max (countVars e1) (countVars e2)
+    countVars (Let x e1 e2) = max (countVars e1) (1 + countVars e2)
+    countVars _             = 0
+
+.. note::
+    This is a naive heuristic - take, for example:
+
+    .. code-block:: haskell
+
+        let x = 1,
+            y = 2,
+            z = 3
+        in 0
+
