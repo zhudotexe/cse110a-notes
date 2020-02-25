@@ -9,6 +9,7 @@ Welcome to cse110a-notes's documentation!
     numunopvars
     branchesbinops
     datarep
+    functions
 
 
 
