@@ -376,12 +376,12 @@ Implementation
     param env v = Sized DWordPtr (immArg env v)
 
     call :: Label -> [Arg] -> [Instruction]
-    call l as = [ IPush (Sized DWordPtr (argAsm a)) | a <- (reversed as) ]  -- push args in reverse order
-              ++ [ ICall l,                                                 -- call
-                   IAdd (Reg ESP) (Const (length as)) ]                     -- clear params from stack
+    call l as = [ IPush a | a <- (reverse as) ]             -- push args in reverse order
+              ++ [ ICall l,                                 -- call
+                   IAdd (Reg ESP) (Const 4*(length as)) ]   -- clear params from stack
 
 Compiling Tail Calls
-""""""""""""""""""""
+--------------------
 What about really big recursion, like:
 
 .. code-block:: haskell
@@ -444,3 +444,73 @@ Text ``=Parse>`` BareP ``=Check>`` BareP ``=Norm>`` AnfP ``=Tag>`` AnfTagP ``=Ta
     type AnfP    = Program SourceSpan
     type AnfTagP = Program (SourceSpan, Tag)
     type AnfTagTlP = Program ((SourceSpan, Tag), Bool)  -- each call is "tail" or not
+
+Transforms
+^^^^^^^^^^
+
+We need two transforms:
+
+- 1 to label each call with whether or not it's a tail call
+- 1 to compile them
+
+Labeling Tail Calls
+"""""""""""""""""""
+
+``Expr`` in non tail positions:
+    - Prim1
+    - Prim2
+    - Let (the bound expression)
+    - If (the condition)
+``Expr`` in tail positions:
+    - If (then/else)
+    - Let (body)
+
+So, let's traverse ``Expr`` with a ``Bool`` that's initially True, but toggled to false in non-tail positions.
+Use this to tail-label at each call. (and all non-calls get False)
+
+.. code-block:: haskell
+
+    -- note: only mark as tail if the function is calling itself recursively!
+    -- so the bool can only really be True if we're in a Decl
+    tails :: Expr a -> Expr (a, Bool)
+    tails = go True
+        where
+            noTail l z              = z (l, False)
+            go _ (Number n l)       = noTail l (Number n)
+            go _ (Boolean b l)      = noTail l (Boolean b)
+            go _ (Id x l)           = noTail l (Id x)
+            go _ (Prim2 o e1 e2 l)  = noTail l (Prim2 o e1' e2')
+                where
+                    [e1', e2']      = go False <$> [e1, e2]         -- prim-args is non-tail
+            go b (If c e1 e2 l)     = noTail l (If c' e1' e2')
+                where
+                    c'              = go False c                    -- cond is non-tail
+                    e1'             = go b e1                       -- then may be tail
+                    e2'             = go b e2                       -- else may be tail
+            go b (Let x e1 e2 l)    = (Let x e1' e2')
+                where
+                    e1'             = go False e1                   -- bound expr is non-tail
+                    e2'             = go b e2                       -- body may be tail
+            go b (App f es l)       = App f es' (l, b)              -- tail label is current flag
+                where
+                    es'             = go False <$> es               -- call args are non-tail
+
+Compiling
+"""""""""
+
+.. code-block:: haskell
+
+    compileExpr :: Env -> AnfTagTlE -> [Instruction]
+    compileExpr env (App f vs l)
+        | isTail l  = tailcall (DefFun f) [param env v | v <- vs]
+        | otherwise = call     (DefFun f) [param env v | v <- vs]
+
+    tailcall :: Label -> [Arg] -> [Instruction]
+    tailcall f args
+        = moveArgs args     -- overwrite param slots with call args
+        ++ exitCode         -- restore ebp and esp
+        ++ [IJmp f]         -- jump to start
+
+    -- but this ^ has an error!
+    -- def f(x, y)
+    --    f(y, x)
