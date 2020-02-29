@@ -10,6 +10,7 @@ Welcome to cse110a-notes's documentation!
     branchesbinops
     datarep
     functions
+    heap
 
 
 
