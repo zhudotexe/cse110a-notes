@@ -281,15 +281,62 @@ Construction
 
     -- and so on...
 
+    -- although, we should really encode them like Haskell lists and not like this.
+
 Accessing
 ^^^^^^^^^
 
 .. code-block:: haskell
 
+    -- get.egg
     def get(t, i):
         if i == 0:
             t[0]
         else:
-            get(t[1], i-1)
+            if istuple(t[1]):
+                get(t[1], i-1)
+            else:
+                false  -- or some error
+
+Constructing Lists
+^^^^^^^^^^^^^^^^^^
+
+.. code-block:: haskell
+
+    def empty(): false
+    def cons(h, t): (h, t)
+
+    -- so, [1,2,3,4] becomes
+    cons(1, cons(2, cons(3, cons(4, empty()))))
+
+Accessing Lists
+^^^^^^^^^^^^^^^
+
+.. code-block:: haskell
+
+    def isEmpty(l):
+        l == empty()
+
+    def head(l):
+        l[0]
+
+    def tail(l):
+        l[1]
+
+Now, we can do things like:
+
+.. code-block:: haskell
+
+    def range(i, j):
+        if i < j:
+            cons(i, range(i + 1, j))
+        else:
+            empty()
+
+    def sum(xs):
+        if isEmpty(xs):
+            0
+        else:
+            head(xs) + sum(tail(xs))
 
 
