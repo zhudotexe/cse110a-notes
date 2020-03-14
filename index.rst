@@ -11,7 +11,7 @@ Welcome to cse110a-notes's documentation!
     datarep
     functions
     heap
-
+    gc
 
 
 
